@@ -40,6 +40,7 @@ import 'package:immich_mobile/theme/theme_data.dart';
 import 'package:immich_mobile/utils/bootstrap.dart';
 import 'package:immich_mobile/utils/cache/widgets_binding.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
+import 'package:immich_mobile/utils/device_profile.dart';
 import 'package:immich_mobile/utils/licenses.dart';
 import 'package:immich_mobile/utils/migration.dart';
 import 'package:immich_mobile/wm_executor.dart';
@@ -78,6 +79,7 @@ void main() async {
 }
 
 Future<void> initApp() async {
+  await DeviceProfile.init();
   await initializeDateFormatting();
 
   if (Platform.isAndroid) {
@@ -176,13 +178,18 @@ class ImmichAppState extends ConsumerState<ImmichApp> with WidgetsBindingObserve
     SystemUiOverlayStyle overlayStyle = const SystemUiOverlayStyle(systemNavigationBarColor: Colors.transparent);
     if (Platform.isAndroid) {
       // Android 8 does not support transparent app bars
-      final info = await DeviceInfoPlugin().androidInfo;
-      if (!mounted) {
-        return;
-      }
+      try {
+        final info = await DeviceInfoPlugin().androidInfo;
+        if (!mounted) {
+          return;
+        }
 
-      if (info.version.sdkInt <= 26) {
-        overlayStyle = context.isDarkTheme ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light;
+        if (info.version.sdkInt <= 26) {
+          overlayStyle = context.isDarkTheme ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light;
+        }
+      } catch (error) {
+        // Fallback to the transparent overlay style when device info is unavailable
+        dPrint(() => "Error reading device info for navigation bar color: $error");
       }
     }
     SystemChrome.setSystemUIOverlayStyle(overlayStyle);

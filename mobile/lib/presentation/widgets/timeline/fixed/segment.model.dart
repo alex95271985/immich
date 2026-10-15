@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:auto_route/auto_route.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/asset/base_asset.model.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
@@ -23,6 +24,7 @@ import 'package:immich_mobile/providers/infrastructure/readonly_mode.provider.da
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/timeline/multiselect.provider.dart';
 import 'package:immich_mobile/routing/router.dart';
+import 'package:immich_mobile/utils/device_profile.dart';
 
 class FixedSegment extends Segment {
   final double tileHeight;
@@ -109,6 +111,10 @@ class _FixedSegmentRow extends ConsumerWidget {
     final timelineService = ref.watch(timelineServiceProvider);
     final isDynamicLayout = columnCount <= (context.isMobile ? 2 : 3);
 
+    if (DeviceProfile.isTV) {
+      _prefetchAhead(timelineService);
+    }
+
     if (timelineService.hasRange(assetIndex, assetCount)) {
       return _buildAssetRow(
         context,
@@ -133,6 +139,19 @@ class _FixedSegmentRow extends ConsumerWidget {
         },
       ),
     );
+  }
+
+  /// TV: keep the asset buffer ahead of the focus frontier so that rows entering
+  /// the cache extent resolve immediately instead of flashing placeholders.
+  /// A single `loadAssets` call fills a whole batch, covering many rows ahead.
+  void _prefetchAhead(TimelineService timelineService) {
+    const rowsAhead = 2;
+    final index = assetIndex + rowsAhead * columnCount;
+    if (index >= timelineService.totalAssets || timelineService.hasRange(index, columnCount)) {
+      return;
+    }
+
+    unawaited(timelineService.loadAssets(index, columnCount));
   }
 
   Widget _buildPlaceholder(BuildContext context) {
@@ -217,7 +236,10 @@ class _DeferredRowLoaderState extends ConsumerState<_DeferredRowLoader> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isLoading && ref.watch(timelineStateProvider.select((state) => state.recommendDeferredLoading))) {
+    // TV: key-driven scrolling must not be treated as a fast fling, rows always load
+    final deferLoading =
+        !DeviceProfile.isTV && ref.watch(timelineStateProvider.select((state) => state.recommendDeferredLoading));
+    if (!_isLoading && deferLoading) {
       return widget.placeholder(context);
     }
 
@@ -226,35 +248,35 @@ class _DeferredRowLoaderState extends ConsumerState<_DeferredRowLoader> {
   }
 }
 
-class _AssetTileWidget extends ConsumerWidget {
+class _AssetTileWidget extends ConsumerStatefulWidget {
   final BaseAsset asset;
   final int assetIndex;
   final Size size;
 
   const _AssetTileWidget({super.key, required this.asset, required this.assetIndex, required this.size});
 
-  Future _handleOnTap(
-    BuildContext ctx,
-    WidgetRef ref,
-    int assetIndex,
-    BaseAsset asset,
-    int? heroOffset,
-    Size remoteSize,
-  ) async {
+  @override
+  ConsumerState<_AssetTileWidget> createState() => _AssetTileWidgetState();
+}
+
+class _AssetTileWidgetState extends ConsumerState<_AssetTileWidget> {
+  bool _focused = false;
+
+  Future<void> _handleOnTap(int assetIndex, BaseAsset asset, int? heroOffset, Size remoteSize) async {
     final multiSelectState = ref.read(multiSelectProvider);
 
     if (multiSelectState.forceEnable || multiSelectState.isEnabled) {
       ref.read(multiSelectProvider.notifier).toggleAssetSelection(asset);
     } else {
       await ref.read(timelineServiceProvider).loadAssets(assetIndex, 1);
-      if (!ctx.mounted) {
+      if (!mounted) {
         return;
       }
 
       ref.read(isPlayingMotionVideoProvider.notifier).playing = false;
       AssetViewer.setAsset(ref, asset, thumbnailSize: remoteSize);
       unawaited(
-        ctx.pushRoute(
+        context.pushRoute(
           AssetViewerRoute(
             initialIndex: assetIndex,
             timelineService: ref.read(timelineServiceProvider),
@@ -266,7 +288,7 @@ class _AssetTileWidget extends ConsumerWidget {
     }
   }
 
-  void _handleOnLongPress(WidgetRef ref, BaseAsset asset) {
+  void _handleOnLongPress(BaseAsset asset) {
     final multiSelectState = ref.read(multiSelectProvider);
     if (multiSelectState.isEnabled || multiSelectState.forceEnable) {
       return;
@@ -276,7 +298,7 @@ class _AssetTileWidget extends ConsumerWidget {
     ref.read(multiSelectProvider.notifier).toggleAssetSelection(asset);
   }
 
-  bool _getLockSelectionStatus(WidgetRef ref) {
+  bool _getLockSelectionStatus() {
     final lockSelectionAssets = ref.read(multiSelectProvider.select((state) => state.lockedSelectionAssets));
 
     if (lockSelectionAssets.isEmpty) {
@@ -287,32 +309,74 @@ class _AssetTileWidget extends ConsumerWidget {
     // includes `localId` while `==` does not — so the same server asset can
     // hash to a different bucket when its `localId` differs (e.g., album-fetched
     // copy has localId=null, merged-timeline copy has it populated).
-    return lockSelectionAssets.any((a) => a == asset);
+    return lockSelectionAssets.any((a) => a == widget.asset);
+  }
+
+  void _setFocused(bool value) {
+    if (_focused != value) {
+      setState(() => _focused = value);
+    }
+  }
+
+  /// TV: scale the tile up and draw a border around the focused one
+  Widget _buildFocusHighlight(BuildContext context, Widget child) {
+    return AnimatedScale(
+      scale: _focused ? 1.06 : 1.0,
+      duration: const Duration(milliseconds: 120),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        foregroundDecoration: _focused
+            ? BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.primary, width: 3))
+            : null,
+        child: child,
+      ),
+    );
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final remoteSize = size * MediaQuery.devicePixelRatioOf(context);
+  Widget build(BuildContext context) {
+    final remoteSize = widget.size * MediaQuery.devicePixelRatioOf(context);
 
     final heroOffset = TabsRouterScope.of(context)?.controller.activeIndex ?? 0;
 
-    final lockSelection = _getLockSelectionStatus(ref);
+    final lockSelection = _getLockSelectionStatus();
     final showStorageIndicator = ref.watch(timelineArgsProvider.select((args) => args.showStorageIndicator));
     final isReadonlyModeEnabled = ref.watch(readonlyModeProvider);
     final showStackIndicator = ref.watch(timelineServiceProvider).origin != TimelineOrigin.trash;
 
+    final tile = GestureDetector(
+      onTap: () => lockSelection ? null : _handleOnTap(widget.assetIndex, widget.asset, heroOffset, remoteSize),
+      onLongPress: () => lockSelection || isReadonlyModeEnabled ? null : _handleOnLongPress(widget.asset),
+      child: ThumbnailTile(
+        widget.asset,
+        remoteSize: remoteSize,
+        lockSelection: lockSelection,
+        showStorageIndicator: showStorageIndicator,
+        showStackIndicator: showStackIndicator,
+        heroOffset: heroOffset,
+      ),
+    );
+
+    // TV only: make the tile traversable by a D-pad. Touch devices keep the
+    // plain tile so the timeline does not pay for the extra widget layers.
+    if (!DeviceProfile.isTV) {
+      return RepaintBoundary(child: tile);
+    }
+
     return RepaintBoundary(
-      child: GestureDetector(
-        onTap: () => lockSelection ? null : _handleOnTap(context, ref, assetIndex, asset, heroOffset, remoteSize),
-        onLongPress: () => lockSelection || isReadonlyModeEnabled ? null : _handleOnLongPress(ref, asset),
-        child: ThumbnailTile(
-          asset,
-          remoteSize: remoteSize,
-          lockSelection: lockSelection,
-          showStorageIndicator: showStorageIndicator,
-          showStackIndicator: showStackIndicator,
-          heroOffset: heroOffset,
-        ),
+      child: FocusableActionDetector(
+        // D-pad center / enter opens the asset, same as a tap
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        },
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) => _handleOnTap(widget.assetIndex, widget.asset, heroOffset, remoteSize),
+          ),
+        },
+        onShowFocusHighlight: _setFocused,
+        child: _buildFocusHighlight(context, tile),
       ),
     );
   }

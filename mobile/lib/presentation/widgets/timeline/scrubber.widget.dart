@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/constants.dart';
@@ -12,6 +13,7 @@ import 'package:immich_mobile/presentation/widgets/timeline/constants.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/segment.model.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.state.dart';
 import 'package:immich_mobile/providers/haptic_feedback.provider.dart';
+import 'package:immich_mobile/utils/device_profile.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
 part 'scrubber.widget.freezed.dart';
@@ -93,6 +95,7 @@ class ScrubberState extends ConsumerState<Scrubber> with TickerProviderStateMixi
 
   late AnimationController _thumbAnimationController;
   Timer? _fadeOutTimer;
+  Timer? _labelTimer;
   late Animation<double> _thumbAnimation;
 
   late AnimationController _labelAnimationController;
@@ -144,6 +147,7 @@ class ScrubberState extends ConsumerState<Scrubber> with TickerProviderStateMixi
     _thumbAnimationController.dispose();
     _labelAnimationController.dispose();
     _fadeOutTimer?.cancel();
+    _labelTimer?.cancel();
     super.dispose();
   }
 
@@ -300,6 +304,56 @@ class ScrubberState extends ConsumerState<Scrubber> with TickerProviderStateMixi
     });
   }
 
+  /// TV: jump one month up/down from the current thumb position.
+  ///
+  /// [_segments] holds one entry per time bucket, which is finer than a month
+  /// when the timeline is zoomed in, so this has to step over every segment of
+  /// the current month and land on the closest one of the neighbouring month.
+  void _jumpMonth(int direction) {
+    if (_segments.isEmpty) {
+      return;
+    }
+
+    final current = _thumbSegmentIndex();
+    final currentMonth = _monthKey(_segments[current]);
+
+    var target = current;
+    if (direction > 0) {
+      // Down: the first segment of the next month
+      while (target < _segments.length - 1 && _monthKey(_segments[target]) == currentMonth) {
+        target++;
+      }
+      if (target < _segments.length - 1) {
+        target++;
+      }
+    } else {
+      // Up: the last segment of the previous month
+      while (target > 0 && _monthKey(_segments[target]) == currentMonth) {
+        target--;
+      }
+      if (target > 0) {
+        target--;
+      }
+    }
+
+    // Already at the first/last month, there is nothing to jump to
+    if (target == current || _monthKey(_segments[target]) == currentMonth) {
+      return;
+    }
+
+    ref.read(hapticFeedbackProvider.notifier).selectionClick();
+    unawaited(_labelAnimationController.forward());
+    _labelTimer?.cancel();
+    _labelTimer = Timer(kTimelineScrubberFadeOutDuration, () => unawaited(_labelAnimationController.reverse()));
+    _snapToSegment(_segments[target]);
+  }
+
+  /// Index of the segment the thumb currently rests on
+  int _thumbSegmentIndex() =>
+      _segments.lastIndexWhere((segment) => segment.startOffset <= _thumbTopOffset).clamp(0, _segments.length - 1);
+
+  int _monthKey(_Segment segment) => segment.date.year * 12 + segment.date.month;
+
   int _findLayoutSegmentIndex(_Segment segment) {
     return widget.layoutSegments.indexWhere((layoutSegment) {
       final bucket = layoutSegment.bucket as TimeBucket;
@@ -325,6 +379,15 @@ class ScrubberState extends ConsumerState<Scrubber> with TickerProviderStateMixi
     });
 
     _resetThumbTimer();
+  }
+
+  Widget _dragThumb(Text? label) {
+    return GestureDetector(
+      onVerticalDragStart: _onDragStart,
+      onVerticalDragUpdate: _onDragUpdate,
+      onVerticalDragEnd: _onDragEnd,
+      child: _Scrubber(thumbAnimation: _thumbAnimation, labelAnimation: _labelAnimation, label: label),
+    );
   }
 
   @override
@@ -363,12 +426,26 @@ class ScrubberState extends ConsumerState<Scrubber> with TickerProviderStateMixi
               top: _thumbTopOffset + widget.topPadding,
               end: 0,
               child: RepaintBoundary(
-                child: GestureDetector(
-                  onVerticalDragStart: _onDragStart,
-                  onVerticalDragUpdate: _onDragUpdate,
-                  onVerticalDragEnd: _onDragEnd,
-                  child: _Scrubber(thumbAnimation: _thumbAnimation, labelAnimation: _labelAnimation, label: label),
-                ),
+                // TV: focusable thumb, up/down jumps one month at a time
+                child: DeviceProfile.isTV
+                    ? CallbackShortcuts(
+                        bindings: {
+                          const SingleActivator(LogicalKeyboardKey.arrowUp): () => _jumpMonth(-1),
+                          const SingleActivator(LogicalKeyboardKey.arrowDown): () => _jumpMonth(1),
+                        },
+                        child: Focus(
+                          onFocusChange: (hasFocus) {
+                            if (hasFocus) {
+                              _fadeOutTimer?.cancel();
+                              unawaited(_thumbAnimationController.forward());
+                            } else {
+                              _resetThumbTimer();
+                            }
+                          },
+                          child: _dragThumb(label),
+                        ),
+                      )
+                    : _dragThumb(label),
               ),
             ),
         ],

@@ -68,54 +68,57 @@ class ViewerTopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
     final lockedViewActions = <Widget>[ViewerKebabMenu(originalTheme: originalTheme)];
 
-    return IgnorePointer(
-      ignoring: opacity < 1.0,
-      child: AnimatedOpacity(
-        opacity: opacity,
-        duration: Durations.short2,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: showingDetails
-                        ? null
-                        : const LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [Colors.black45, Colors.black12, Colors.transparent],
-                            stops: [0.0, 0.7, 1.0],
-                          ),
-                  ),
-                ),
+    final bar = Stack(
+      children: [
+        Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: showingDetails
+                    ? null
+                    : const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black45, Colors.black12, Colors.transparent],
+                        stops: [0.0, 0.7, 1.0],
+                      ),
               ),
             ),
-            SafeArea(
-              bottom: false,
-              child: SizedBox(
-                height: preferredSize.height,
-                child: Theme(
-                  data: context.themeData.copyWith(iconTheme: const IconThemeData(size: 22, color: Colors.white)),
-                  child: NavigationToolbar(
-                    centerMiddle: true,
-                    leading: const _AppBarBackButton(),
-                    middle: showingDetails ? null : _AssetInfoTitle(asset: asset),
-                    trailing: !showingDetails && !isReadonlyModeEnabled
-                        ? ImmichColorOverride(
-                            color: Colors.white,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: isInLockedView ? lockedViewActions : actions,
-                            ),
-                          )
-                        : null,
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
+        SafeArea(
+          bottom: false,
+          child: SizedBox(
+            height: preferredSize.height,
+            child: Theme(
+              data: context.themeData.copyWith(iconTheme: const IconThemeData(size: 22, color: Colors.white)),
+              child: NavigationToolbar(
+                centerMiddle: true,
+                leading: const _AppBarBackButton(),
+                middle: showingDetails ? null : _AssetInfoTitle(asset: asset),
+                trailing: !showingDetails && !isReadonlyModeEnabled
+                    ? ImmichColorOverride(
+                        color: Colors.white,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: isInLockedView ? lockedViewActions : actions,
+                        ),
+                      )
+                    : null,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    return ExcludeFocus(
+      // IgnorePointer only blocks pointer events, not focus: exclude the
+      // hidden overlay from focus traversal as well (TV remote support)
+      excluding: opacity < 1.0,
+      child: IgnorePointer(
+        ignoring: opacity < 1.0,
+        child: AnimatedOpacity(opacity: opacity, duration: Durations.short2, child: bar),
       ),
     );
   }

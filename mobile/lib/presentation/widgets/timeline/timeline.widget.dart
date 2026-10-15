@@ -25,6 +25,7 @@ import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
 import 'package:immich_mobile/providers/timeline/multiselect.provider.dart';
 import 'package:immich_mobile/routing/app_navigation_observer.dart';
 import 'package:immich_mobile/utils/debounce.dart';
+import 'package:immich_mobile/utils/device_profile.dart';
 import 'package:immich_mobile/widgets/common/immich_sliver_app_bar.dart';
 import 'package:immich_mobile/widgets/common/mesmerizing_sliver_app_bar.dart';
 import 'package:immich_mobile/widgets/common/selection_sliver_app_bar.dart';
@@ -63,7 +64,9 @@ class Timeline extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final columnCount = ref.watch(appConfigProvider.select((config) => config.timeline.tilesPerRow));
+    final tilesPerRow = ref.watch(appConfigProvider.select((config) => config.timeline.tilesPerRow));
+    // TV: use a denser grid suited for viewing distance (TV-REQUIREMENTS T4)
+    final columnCount = DeviceProfile.isTV ? (tilesPerRow < 6 ? 6 : tilesPerRow) : tilesPerRow;
     return LayoutBuilder(
       builder: (_, constraints) {
         return ProviderScope(

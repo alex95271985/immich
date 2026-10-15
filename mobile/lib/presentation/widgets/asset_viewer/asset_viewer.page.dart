@@ -23,6 +23,7 @@ import 'package:immich_mobile/providers/asset_viewer/asset_viewer.provider.dart'
 import 'package:immich_mobile/providers/cast.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/current_album.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/timeline.provider.dart';
+import 'package:immich_mobile/utils/device_profile.dart';
 import 'package:immich_mobile/utils/system_ui.utils.dart';
 import 'package:immich_mobile/widgets/photo_view/photo_view.dart';
 
@@ -73,6 +74,11 @@ class AssetViewer extends ConsumerStatefulWidget {
       ref.read(assetViewerProvider.notifier).setControls(false);
     }
 
+    // TV: open with a clean fullscreen; the remote's select key toggles the controls
+    if (DeviceProfile.isTV) {
+      ref.read(assetViewerProvider.notifier).setControls(false);
+    }
+
     ref.read(assetViewerProvider.notifier).setAsset(asset, thumbnailSize: thumbnailSize);
   }
 }
@@ -93,6 +99,11 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
 
   StreamSubscription? _reloadSubscription;
   KeepAliveLink? _stackChildrenKeepAlive;
+
+  // TV: key-repeat can request page changes faster than the DB query + preload
+  // of `_onAssetChanged` can finish; coalesce to the latest requested index
+  bool _isAssetChangeInFlight = false;
+  int? _pendingAssetChange;
 
   void _onTapNavigate(int direction) {
     final page = _pageController.page?.toInt();
@@ -168,6 +179,24 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
   }
 
   Future<void> _onAssetChanged(int index) async {
+    if (_isAssetChangeInFlight) {
+      _pendingAssetChange = index;
+      return;
+    }
+    _isAssetChangeInFlight = true;
+    try {
+      await _processAssetChange(index);
+    } finally {
+      _isAssetChangeInFlight = false;
+      final pending = _pendingAssetChange;
+      _pendingAssetChange = null;
+      if (pending != null && mounted) {
+        unawaited(_onAssetChanged(pending));
+      }
+    }
+  }
+
+  Future<void> _processAssetChange(int index) async {
     _currentPage = index;
 
     final asset = await ref.read(timelineServiceProvider).getAssetAsync(index);
@@ -186,6 +215,10 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
     _handleCasting();
     _stackChildrenKeepAlive?.close();
     _stackChildrenKeepAlive = ref.read(stackChildrenNotifier(asset).notifier).ref.keepAlive();
+  }
+
+  void _toggleControls() {
+    ref.read(assetViewerProvider.notifier).toggleControls();
   }
 
   void _handleCasting() {
@@ -285,7 +318,7 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
       unawaited(_setSystemUIMode(controls, details));
     });
 
-    return AnnotatedRegion(
+    final Widget viewer = AnnotatedRegion(
       value: _viewerOverlayStyle,
       child: Scaffold(
         backgroundColor: backgroundColor,
@@ -293,12 +326,18 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
         appBar: const ViewerTopAppBar(),
         extendBody: true,
         extendBodyBehindAppBar: true,
-        floatingActionButton: IgnorePointer(
-          ignoring: !showingControls,
-          child: AnimatedOpacity(
-            opacity: showingControls ? 1.0 : 0.0,
-            duration: Durations.short2,
-            child: const DownloadStatusFloatingButton(),
+        floatingActionButton: ExcludeFocus(
+          // IgnorePointer only blocks pointer events, not focus: exclude the
+          // hidden overlay from focus traversal as well, otherwise arrow keys
+          // would move focus onto invisible buttons
+          excluding: !showingControls,
+          child: IgnorePointer(
+            ignoring: !showingControls,
+            child: AnimatedOpacity(
+              opacity: showingControls ? 1.0 : 0.0,
+              duration: Durations.short2,
+              child: const DownloadStatusFloatingButton(),
+            ),
           ),
         ),
         bottomNavigationBar: const ViewerBottomAppBar(),
@@ -332,6 +371,23 @@ class _AssetViewerState extends ConsumerState<AssetViewer> {
           ],
         ),
       ),
+    );
+
+    // TV: bind the remote's directional keys to page navigation and the
+    // select/enter key to toggling the controls overlay. `Focus(autofocus)`
+    // keeps the primary focus on the viewer itself so the shortcuts stay active.
+    if (!DeviceProfile.isTV) {
+      return viewer;
+    }
+
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _onTapNavigate(-1),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () => _onTapNavigate(1),
+        const SingleActivator(LogicalKeyboardKey.select): _toggleControls,
+        const SingleActivator(LogicalKeyboardKey.enter): _toggleControls,
+      },
+      child: Focus(autofocus: true, child: viewer),
     );
   }
 }

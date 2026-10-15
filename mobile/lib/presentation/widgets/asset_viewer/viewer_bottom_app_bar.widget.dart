@@ -12,9 +12,14 @@ class ViewerBottomAppBar extends ConsumerWidget {
     final double opacity =
         ref.watch(assetViewerProvider.select((s) => s.backgroundOpacity)) * (showingControls ? 1 : 0);
 
-    return IgnorePointer(
-      ignoring: opacity < 1.0,
-      child: AnimatedOpacity(opacity: opacity, duration: Durations.short2, child: const ViewerBottomBar()),
+    return ExcludeFocus(
+      // IgnorePointer only blocks pointer events, not focus: exclude the
+      // hidden overlay from focus traversal as well (TV remote support)
+      excluding: opacity < 1.0,
+      child: IgnorePointer(
+        ignoring: opacity < 1.0,
+        child: AnimatedOpacity(opacity: opacity, duration: Durations.short2, child: const ViewerBottomBar()),
+      ),
     );
   }
 }

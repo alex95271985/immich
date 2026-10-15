@@ -1,7 +1,9 @@
 package app.alextran.immich
 
+import android.app.UiModeManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.os.ext.SdkExtensions
 import app.alextran.immich.background.BackgroundEngineLock
@@ -26,6 +28,7 @@ import app.alextran.immich.sync.NativeSyncApiImpl30
 import app.alextran.immich.viewintent.ViewIntentPlugin
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -61,6 +64,17 @@ class MainActivity : FlutterFragmentActivity() {
 
       BackgroundWorkerFgHostApi.setUp(messenger, BackgroundWorkerApiImpl(ctx))
       ConnectivityApi.setUp(messenger, ConnectivityApiImpl(ctx))
+
+      // TV detection fallback for devices without the leanback system feature
+      MethodChannel(messenger, "immich/mobile/device_profile").setMethodCallHandler { call, result ->
+        when (call.method) {
+          "isTelevision" -> {
+            val uiModeManager = ctx.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+            result.success(uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION)
+          }
+          else -> result.notImplemented()
+        }
+      }
 
       flutterEngine.plugins.add(ViewIntentPlugin())
       flutterEngine.plugins.add(backgroundEngineLockImpl)

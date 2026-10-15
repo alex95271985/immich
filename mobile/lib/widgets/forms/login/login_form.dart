@@ -25,6 +25,7 @@ import 'package:immich_mobile/providers/view_intent/view_intent_handler.provider
 import 'package:immich_mobile/providers/websocket.provider.dart';
 import 'package:immich_mobile/repositories/permission.repository.dart';
 import 'package:immich_mobile/routing/router.dart';
+import 'package:immich_mobile/utils/device_profile.dart';
 import 'package:immich_mobile/utils/provider_utils.dart';
 import 'package:immich_mobile/utils/semver.dart';
 import 'package:immich_mobile/utils/url_helper.dart';
@@ -266,11 +267,15 @@ class LoginForm extends HookConsumerWidget {
           unawaited(context.pushRoute(const ChangePasswordRoute()));
           passwordController.clear();
         } else {
-          await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
-          if (isSyncRemoteDeletionsMode()) {
-            await getManageMediaPermission();
+          // TV: no local gallery / camera to sync, skip the permission and
+          // local sync chain entirely (TV-REQUIREMENTS T5)
+          if (!DeviceProfile.isTV) {
+            await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
+            if (isSyncRemoteDeletionsMode()) {
+              await getManageMediaPermission();
+            }
+            unawaited(handleSyncFlow());
           }
-          unawaited(handleSyncFlow());
           if (!context.mounted) {
             return;
           }
@@ -371,11 +376,14 @@ class LoginForm extends HookConsumerWidget {
               .saveAuthInfo(accessToken: loginResponseDto.accessToken);
 
           if (isSuccess && context.mounted) {
-            await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
-            if (isSyncRemoteDeletionsMode()) {
-              await getManageMediaPermission();
+            // TV: skip the permission and local sync chain (TV-REQUIREMENTS T5)
+            if (!DeviceProfile.isTV) {
+              await ref.read(galleryPermissionNotifier.notifier).requestGalleryPermission();
+              if (isSyncRemoteDeletionsMode()) {
+                await getManageMediaPermission();
+              }
+              unawaited(handleSyncFlow());
             }
-            unawaited(handleSyncFlow());
             if (!context.mounted) {
               return;
             }
