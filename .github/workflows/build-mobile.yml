@@ -12,10 +12,6 @@ on:
         default: 'development'
         type: string
     secrets:
-      PUSH_O_MATIC_APP_CLIENT_ID:
-        required: true
-      PUSH_O_MATIC_APP_KEY:
-        required: true
       KEY_JKS:
         required: true
       ALIAS:
@@ -24,21 +20,10 @@ on:
         required: true
       ANDROID_STORE_PASSWORD:
         required: true
-      APP_STORE_CONNECT_API_KEY_ID:
-        required: true
-      APP_STORE_CONNECT_API_KEY_ISSUER_ID:
-        required: true
-      APP_STORE_CONNECT_API_KEY:
-        required: true
-      IOS_CERTIFICATE_P12:
-        required: true
-      IOS_CERTIFICATE_PASSWORD:
-        required: true
-      FASTLANE_TEAM_ID:
-        required: true
   pull_request:
   push:
     branches: [main, 'release/*']
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,18 +42,11 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
-      - id: token
-        uses: immich-app/devtools/actions/create-workflow-token@df46d635b905e618b88fc4c95baa920aeb30b309 # create-workflow-token-action-v3.0.1
-        with:
-          client-id: ${{ secrets.PUSH_O_MATIC_APP_CLIENT_ID }}
-          private-key: ${{ secrets.PUSH_O_MATIC_APP_KEY }}
-          permission-contents: read
-
       - name: Check what should run
         id: check
         uses: immich-app/devtools/actions/pre-job@75493d49052d536863fc96100086782c5279b145 # pre-job-action-v2.1.1
         with:
-          github-token: ${{ steps.token.outputs.token }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           filters: |
             mobile:
               - 'mobile/**'
@@ -86,22 +64,13 @@ jobs:
       contents: read
       pull-requests: write
     if: ${{ github.actor != 'dependabot[bot]' && fromJSON(needs.pre-job.outputs.should_run).mobile == true }}
-    runs-on: mich
+    runs-on: ubuntu-latest
 
     steps:
-      - id: token
-        uses: immich-app/devtools/actions/create-workflow-token@df46d635b905e618b88fc4c95baa920aeb30b309 # create-workflow-token-action-v3.0.1
-        with:
-          client-id: ${{ secrets.PUSH_O_MATIC_APP_CLIENT_ID }}
-          private-key: ${{ secrets.PUSH_O_MATIC_APP_KEY }}
-          permission-contents: read
-          permission-pull-requests: write
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-          token: ${{ steps.token.outputs.token }}
 
       - name: Restore Rust Cache
         id: cache-rust-restore
@@ -120,7 +89,7 @@ jobs:
       - name: Setup Mise
         uses: immich-app/devtools/actions/use-mise@caac7f7e4298458a14238959504f411fc6cc7f06 # use-mise-action-v3.2.3
         with:
-          github_token: ${{ steps.token.outputs.token }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           working_directory: ./mobile
 
       - name: Create the Keystore
@@ -182,7 +151,7 @@ jobs:
           APK_URL: ${{ steps.upload-apk.outputs.artifact-url }}
         with:
           id: mobile-android-apk
-          token: ${{ steps.token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           body: |
             📱 **Android release APK (universal)** — `${{ env.HEAD_SHA }}`
 
@@ -206,151 +175,6 @@ jobs:
             ~/.android/sdk
             mobile/android/.gradle
           key: ${{ steps.cache-gradle-restore.outputs.cache-primary-key }}
-
-      - name: Save Rust Cache
-        id: cache-rust-save
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: github.ref == 'refs/heads/main'
-        with:
-          path: |
-            ~/.rustup/toolchains
-            ~/.rustup/update-hashes
-            ~/.cargo/bin
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ steps.cache-rust-restore.outputs.cache-primary-key }}
-
-  build-sign-ios:
-    name: Build and sign iOS
-    needs: pre-job
-    permissions:
-      contents: read
-    # Run on main branch or workflow_dispatch, or on PRs/other branches (build only, no upload)
-    if: ${{ !github.event.pull_request.head.repo.fork && fromJSON(needs.pre-job.outputs.should_run).mobile == true }}
-    runs-on: macos-26
-
-    steps:
-      - id: token
-        uses: immich-app/devtools/actions/create-workflow-token@df46d635b905e618b88fc4c95baa920aeb30b309 # create-workflow-token-action-v3.0.1
-        with:
-          client-id: ${{ secrets.PUSH_O_MATIC_APP_CLIENT_ID }}
-          private-key: ${{ secrets.PUSH_O_MATIC_APP_KEY }}
-          permission-contents: read
-
-      - name: Select Xcode 26
-        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
-
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
-
-      - name: Restore Rust Cache
-        id: cache-rust-restore
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.rustup/toolchains
-            ~/.rustup/update-hashes
-            ~/.cargo/bin
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: build-mobile-rust-${{ runner.os }}-${{ hashFiles('native/crates/native_core_ffi/rust-toolchain.toml', 'native/Cargo.lock') }}
-          restore-keys: |
-            build-mobile-rust-${{ runner.os }}-
-
-      - name: Setup Mise
-        uses: immich-app/devtools/actions/use-mise@caac7f7e4298458a14238959504f411fc6cc7f06 # use-mise-action-v3.2.3
-        with:
-          github_token: ${{ steps.token.outputs.token }}
-          working_directory: ./mobile
-
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
-        with:
-          ruby-version: '3.4'
-          bundler-cache: true # zizmor: ignore[cache-poisoning] release branches cannot read caches written by pull requests
-          working-directory: ./mobile/ios
-
-      - name: Install dependencies
-        run: mise //mobile:install:ci
-
-      - name: Perform codegen
-        run: mise //mobile:codegen
-
-      - name: Resolve iOS Swift Packages
-        working-directory: ./mobile
-        run: flutter build ios --config-only --no-codesign
-
-      - name: Create API Key
-        env:
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
-          API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-        working-directory: ./mobile/ios
-        run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$API_KEY_CONTENT" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8
-
-      - name: Import Certificate
-        env:
-          IOS_CERTIFICATE_P12: ${{ secrets.IOS_CERTIFICATE_P12 }}
-        working-directory: ./mobile/ios
-        run: |
-          # Decode certificate
-          echo "$IOS_CERTIFICATE_P12" | base64 --decode > certificate.p12
-
-      - name: Create keychain and import certificate
-        env:
-          KEYCHAIN_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-        working-directory: ./mobile/ios
-        run: |
-          # Create keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-
-          # Import certificate
-          security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-
-          # Verify certificate was imported
-          security find-identity -v -p codesigning build.keychain
-
-      - name: Build and deploy to TestFlight
-        env:
-          FASTLANE_TEAM_ID: ${{ secrets.FASTLANE_TEAM_ID }}
-          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_NAME: build.keychain
-          KEYCHAIN_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
-          ENVIRONMENT: ${{ inputs.environment || 'development' }}
-          FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: 120
-          FASTLANE_XCODEBUILD_SETTINGS_RETRIES: 6
-        working-directory: ./mobile/ios
-        run: |
-          if [[ "$DEPLOY" != 'true' ]]; then
-            bundle exec fastlane gha_build_only
-          elif [[ "$ENVIRONMENT" == "development" ]]; then
-            bundle exec fastlane gha_testflight_dev
-          else
-            bundle exec fastlane gha_release_prod
-          fi
-
-      - name: Clean up keychain
-        if: always()
-        run: |
-          security delete-keychain build.keychain || true
-
-      - name: Upload IPA artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ios-release-ipa
-          path: mobile/ios/Runner.ipa
 
       - name: Save Rust Cache
         id: cache-rust-save
