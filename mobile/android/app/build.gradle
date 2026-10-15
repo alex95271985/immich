@@ -43,6 +43,14 @@ android {
     versionCode flutter.versionCode
     versionName flutter.versionName
     resValue "string", "app_name", "Immich"
+
+    // TV fork: arm64-v8a only. `--target-platform android-arm64` already stops
+    // Flutter from building the other two ABIs; this additionally guarantees that
+    // no dependency (e.g. cronet-embedded) contributes a foreign .so at packaging
+    // time. Keep the two in sync — this one is the authoritative filter.
+    ndk {
+      abiFilters "arm64-v8a"
+    }
   }
 
   signingConfigs {

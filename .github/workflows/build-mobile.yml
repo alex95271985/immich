@@ -129,12 +129,11 @@ jobs:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [[ $DEPLOY == 'true' ]]; then
-            flutter build apk --release
-            flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64,android-x64
-          else
-            flutter build apk --release
-          fi
+          # TV fork: arm64-v8a only. Dropping android-arm and android-x64 removes
+          # two of the three native payloads (libflutter.so, libapp.so and the Rust
+          # native_core .so) from the APK. `--split-per-abi` is pointless with a
+          # single ABI, so the output is a single app-release.apk.
+          flutter build apk --release --target-platform android-arm64
 
       - name: Publish Android Artifact
         id: upload-apk
